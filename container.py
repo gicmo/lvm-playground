@@ -25,7 +25,7 @@ def inspect(image):
             "pvdisplay", "-m"
         ], check=False)
         subprocess.run([
-            "lvs"
+            "lvdisplay"
         ], check=False)
 
 
