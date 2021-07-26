@@ -2,6 +2,7 @@
 
 import abc
 import io
+import json
 import os
 import re
 import struct
@@ -339,19 +340,16 @@ class MDAHeader(Header):
         raw_locns = list(RawLocN.read_array(fp))
         return cls(data, raw_locns)
 
-    def read_metadata(self, fp):
+    def read_metadata(self, fp) -> "Metadata":
         loc = self.raw_locns[self.LOC_COMMITTED]
         offset = self.start + loc["offset"]
         fp.seek(offset)
         data = fp.read(loc["size"])
-        print(data)
-        data = data.decode("utf-8")
-        md = Metadata.parse(data)
+        md = Metadata.decode(data)
         return md
 
-    def write_metadata(self, fp, data):
-        strdata = Metadata.encode(data) + "\0"
-        raw = strdata.encode("utf-8")
+    def write_metadata(self, fp, data: "Metadata"):
+        raw = data.encode()
 
         loc = self.raw_locns[self.LOC_COMMITTED]
         offset = self.start + loc["offset"]
@@ -385,7 +383,6 @@ class MDAHeader(Header):
 
         fp.seek(self.start)
         n = fp.write(fr.getvalue())
-        print(n)
         return n
 
     def __str__(self):
@@ -396,12 +393,25 @@ class MDAHeader(Header):
 
 
 class Metadata:
-    def __init__(self, header: MDAHeader, data: Dict) -> None:
-        self.header = header
+    def __init__(self, vg_name, data: Dict) -> None:
+        self.vg_name = vg_name
         self.data = data
 
+    @classmethod
+    def decode(cls, data: bytes) -> "Metadata":
+        data = data.decode("utf-8")
+        name, md = Metadata.decode_data(data)
+        return cls(name, md)
+
+    def encode(self) -> bytes:
+        data = Metadata.encode_data(self.data)
+        return data.encode("utf-8")
+
+    def __str__(self) -> str:
+        return json.dumps(self.data, indent=2)
+
     @staticmethod
-    def parse(raw):
+    def decode_data(raw):
         substitutions = {
             r"#.*\n": "",
             r"\[": "[ ",
@@ -417,7 +427,6 @@ class Metadata:
             data = re.sub(pattern, repl, data)
 
         data = data.split()
-        print(data)
 
         DICT_START = '{'
         DICT_END = '}'
@@ -475,12 +484,10 @@ class Metadata:
         name = data.pop(0)
         obj = parse_dict(name)
 
-        return obj
+        return name, obj
 
     @staticmethod
-    def encode(data):
-
-        b = ""
+    def encode_data(data):
 
         def encode_dict(d):
             s = ""
@@ -506,7 +513,7 @@ class Metadata:
                 s += '}\n'
             return s
 
-        return encode_dict(data)
+        return encode_dict(data) + "\0"
 
 
 class Disk:
@@ -534,12 +541,8 @@ class Disk:
             data = ma.read_data(self.fp)
             hdr = MDAHeader.read(data)
             md = hdr.read_metadata(self.fp)
-            print(hdr)
             print(md)
-
             hdr.write_metadata(self.fp, md)
-            md = hdr.read_metadata(self.fp)
-            print(hdr)
 
     def dump(self):
         print(self.path)
