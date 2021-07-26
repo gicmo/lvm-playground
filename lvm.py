@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import abc
 import io
 import os
 import re
@@ -100,7 +101,46 @@ class CStruct:
         return any(field.name == name for field in self.fields)
 
 
-class LabelHeader:
+class Header:
+    """Abstract base class for all headers"""
+
+    @property
+    @classmethod
+    @abc.abstractmethod
+    def struct(cls):
+        """Definition of the underlying struct data"""
+
+    def __init__(self, data):
+        self.data = data
+
+    def __getitem__(self, name):
+        assert name in self.struct
+        return self.data[name]
+
+    def __setitem__(self, name, value):
+        assert name in self.struct
+        self.data[name] = value
+
+    def pack(self):
+        return self.struct.pack(self.data)
+
+    @classmethod
+    def read(cls, fp):
+        data = cls.struct.read(fp)
+        return cls(data)
+
+    def write(self, fp):
+        raw = self.pack()
+        fp.write(raw)
+
+    def __str__(self) -> str:
+        msg = f"{self.__class__.__name__}:"
+        for f in self.struct.fields:
+            msg += f"\n\t{f.name}: {self[f.name]}"
+        return msg
+
+
+class LabelHeader(Header):
 
     # /* On disk - 32 bytes */
     # struct label_header {
@@ -125,34 +165,28 @@ class LabelHeader:
     LABEL_SCAN_SECTORS = 4
 
     def __init__(self, data):
-        up = self.struct.unpack(data)
-
+        super().__init__(data)
         self.sector_size = 512
 
-        self.sector = up["sector"]
-        self.crc = up["crc"]
-        self.offset = up["offset"]
-        self.type = up["type"]
-
-    @ classmethod
+    @classmethod
     def search(cls, fp, *, sector_size=512):
         fp.seek(0, io.SEEK_SET)
         for i in range(cls.LABEL_SCAN_SECTORS):
-            data = fp.read(sector_size)
-            if data[0:len(cls.LABELID)] == cls.LABELID:
+            raw = fp.read(sector_size)
+            if raw[0:len(cls.LABELID)] == cls.LABELID:
+                data = cls.struct.unpack(raw)
                 return LabelHeader(data)
         return None
 
     def read_pv_header(self, fp):
-        offset = self.sector * self.sector_size + self.offset
+        sector = self.data["sector"]
+        offset = self.data["offset"]
+        offset = sector * self.sector_size + offset
         fp.seek(offset)
         return PVHeader.read(fp)
 
-    def __str__(self):
-        return f"LabelHeader: {self.sector}, {self.crc}, {self.offset}, {self.type}"
 
-
-class DiskLocN:
+class DiskLocN(Header):
     """
     struct disk_locn {
         uint64_t offset;	/* Offset in bytes to start sector */
@@ -164,12 +198,16 @@ class DiskLocN:
         "size": "Q"
     })
 
-    def __init__(self, offset, size):
-        self.offset = offset
-        self.size = size
+    def __init__(self, data):
+        super().__init__(data)
 
-    def __str__(self):
-        return f"DiskLocN: {self.offset}, {self.size}"
+    @property
+    def offset(self):
+        return self.data["offset"]
+
+    @property
+    def size(self):
+        return self.data["size"]
 
     def read_data(self, fp: BinaryIO):
         fp.seek(self.offset)
@@ -184,10 +222,10 @@ class DiskLocN:
             if not data or data["offset"] == 0:
                 break
 
-            yield DiskLocN(data["offset"], data["size"])
+            yield DiskLocN(data)
 
 
-class PVHeader:
+class PVHeader(Header):
     """
     struct pv_header {
         int8_t pv_uuid[ID_LEN];
@@ -206,11 +244,17 @@ class PVHeader:
     })
 
     def __init__(self, data, data_areas, meta_areas):
-        self.uuid = data["uuid"]
-        self.disk_size = data["disk_size"]
-
+        super().__init__(data)
         self.data_areas = data_areas
         self.meta_areas = meta_areas
+
+    @property
+    def uuid(self):
+        return self.data["uuid"]
+
+    @property
+    def disk_size(self):
+        return self.data["disk_size"]
 
     @classmethod
     def read(cls, fp):
@@ -222,7 +266,7 @@ class PVHeader:
         return cls(data, data_areas, meta_areas)
 
     def __str__(self):
-        msg = f"PVHeader(uuid: {self.uuid}, {self.disk_size})"
+        msg = super().__str__()
         if self.data_areas:
             msg += "\nData: \n\t" + "\n\t".join(map(str, self.data_areas))
         if self.meta_areas:
@@ -230,7 +274,7 @@ class PVHeader:
         return msg
 
 
-class RawLocN:
+class RawLocN(Header):
     struct = CStruct({
         "offset": "Q",
         "size": "Q",
@@ -239,22 +283,6 @@ class RawLocN:
     })
 
     IGNORED = 0x00000001
-
-    def __init__(self, data) -> None:
-        self.data = data
-
-    def __getitem__(self, name):
-        assert name in self.struct
-        return self.data[name]
-
-    def __setitem__(self, name, value):
-        assert name in self.struct
-        self.data[name] = value
-
-    def write(self, fp):
-        raw = self.struct.pack(self.data)
-        n = fp.write(raw)
-        return n
 
     @classmethod
     def read_array(cls, fp: BinaryIO):
@@ -266,12 +294,8 @@ class RawLocN:
 
             yield cls(loc)
 
-    def __str__(self):
-        s, o = self["size"], self["offset"]
-        return f"RawLocN ({s} bytes @ {o}) ({id(self.data)})"
 
-
-class MDAHeader:
+class MDAHeader(Header):
     struct = CStruct({
         "checksum": "L",
         "magic": "16s",
@@ -286,7 +310,7 @@ class MDAHeader:
     HEADER_SIZE = MDA_HEADER_SIZE
 
     def __init__(self, data, raw_locns):
-        self.data = data
+        super().__init__(data)
         self.raw_locns = raw_locns
 
     @property
@@ -365,7 +389,7 @@ class MDAHeader:
         return n
 
     def __str__(self):
-        msg = f"MDA: crc: {self.checksum}, {self.size} bytes @ {self.start}"
+        msg = super().__str__()
         if self.raw_locns:
             msg += "\n\t" + "\n\t".join(map(str, self.raw_locns))
         return msg
