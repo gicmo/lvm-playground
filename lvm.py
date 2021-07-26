@@ -137,21 +137,12 @@ class Header:
 
 class LabelHeader(Header):
 
-    # /* On disk - 32 bytes */
-    # struct label_header {
-    #     int8_t id[8];		     /* LABELONE */
-    #     uint64_t sector_xl;	 /* Sector number of this label */
-    #     uint32_t crc_xl;	     /* From next field to end of sector */
-    #     uint32_t offset_xl;	 /* Offset from start of struct to contents */
-    #     int8_t type[8];		 /* LVM2 001 */
-    # } __attribute__ ((packed));
-
-    struct = CStruct({
-        "id": "8s",
-        "sector": "Q",
-        "crc": "L",
-        "offset": "L",
-        "type": "8s"
+    struct = CStruct({     # 32 bytes on disk
+        "id": "8s",        # int8_t[8] // LABELONE
+        "sector": "Q",     # uint64_t  // Sector number of this label
+        "crc": "L",        # uint32_t  // From next field to end of sector
+        "offset": "L",     # uint32_t  // Offset from start of struct to contents
+        "type": "8s"       # int8_t[8] // LVM2 00
     })
 
     LABELID = b"LABELONE"
@@ -182,15 +173,10 @@ class LabelHeader(Header):
 
 
 class DiskLocN(Header):
-    """
-    struct disk_locn {
-        uint64_t offset;	/* Offset in bytes to start sector */
-        uint64_t size;		/* Bytes */
-    } __attribute__ ((packed));
-    """
+
     struct = CStruct({
-        "offset": "Q",
-        "size": "Q"
+        "offset": "Q",  # uint64_t // Offset in bytes to start sector
+        "size": "Q"     # uint64_t // Size in bytes
     })
 
     def __init__(self, data):
@@ -221,22 +207,14 @@ class DiskLocN(Header):
 
 
 class PVHeader(Header):
-    """
-    struct pv_header {
-        int8_t pv_uuid[ID_LEN];
 
-        /* This size can be overridden if PV belongs to a VG */
-        uint64_t device_size_xl;	/* Bytes */
-
-        /* NULL-terminated list of data areas followed by */
-        /* NULL-terminated list of metadata area headers */
-        struct disk_locn disk_areas_xl[];	/* Two lists */
-    } __attribute__ ((packed));
-    """
+    ID_LEN = 32
     struct = CStruct({
-        "uuid": "32s",
-        "disk_size": "Q"
+        "uuid": "32s",    # int8_t[ID_LEN]
+        "disk_size": "Q"  # uint64_t // size in bytes
     })
+    # followed by two NULL terminated list of data areas
+    # and metadata areas of type `DiskLocN`
 
     def __init__(self, data, data_areas, meta_areas):
         super().__init__(data)
@@ -271,10 +249,10 @@ class PVHeader(Header):
 
 class RawLocN(Header):
     struct = CStruct({
-        "offset": "Q",
-        "size": "Q",
-        "checksum": "L",
-        "flags": "L",
+        "offset": "Q",    # uint64_t  // Offset in bytes to start sector
+        "size": "Q",      # uint64_t  // Size in bytes
+        "checksum": "L",  # uint32_t  // Checksum of data
+        "flags": "L",     # uint32_t  // Flags
     })
 
     IGNORED = 0x00000001
@@ -292,12 +270,13 @@ class RawLocN(Header):
 
 class MDAHeader(Header):
     struct = CStruct({
-        "checksum": "L",
-        "magic": "16s",
-        "version": "L",
-        "start": "Q",
-        "size":  "Q"
+        "checksum": "L",  # uint32_t   // Checksum of data
+        "magic": "16s",   # int8_t[16] // Allows to scan for metadata
+        "version": "L",   # uint32_t
+        "start": "Q",     # uint64_t   // Absolute start byte of itself
+        "size":  "Q"      # uint64_t   // Size of metadata area
     })
+    # followed by a null termiated list of type `RawLocN`
 
     LOC_COMMITTED = 0
     LOC_PRECOMMITTED = 1
