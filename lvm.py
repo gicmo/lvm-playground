@@ -8,6 +8,7 @@ import re
 import struct
 import sys
 
+from collections import OrderedDict
 from typing import BinaryIO, Dict, Union
 
 # https://github.com/lvmteam/lvm2/blob/8801a86a3e0c87d92b250a6477f86ef9efdb2ba0/lib/format_text/format-text.c
@@ -393,9 +394,26 @@ class MDAHeader(Header):
 
 
 class Metadata:
-    def __init__(self, vg_name, data: Dict) -> None:
-        self.vg_name = vg_name
+    def __init__(self, vg_name, data: OrderedDict) -> None:
+        self._vg_name = vg_name
         self.data = data
+
+    @property
+    def vg_name(self) -> str:
+        return self._vg_name
+
+    @vg_name.setter
+    def vg_name(self, vg_name: str) -> None:
+        self.rename_vg(vg_name)
+
+    def rename_vg(self, new_name):
+        # Replace the corresponding key in the dict and
+        # ensure it is always the first key
+        name = self.vg_name
+        d = self.data[name]
+        del self.data[name]
+        self.data[new_name] = d
+        self.data.move_to_end(new_name, last=False)
 
     @classmethod
     def decode(cls, data: bytes) -> "Metadata":
@@ -435,18 +453,23 @@ class Metadata:
         STRING_START = '"'
         STRING_END = '"'
 
+        def next_token():
+            if not data:
+                return None
+            return data.pop(0)
+
         def parse_str(val):
             result = ""
 
             while val != STRING_END:
                 result = f"{result} {val}"
-                val = data.pop(0)
+                val = next_token()
 
             return result.strip()
 
         def parse_val(val):
             if val == STRING_START:
-                return parse_str(data.pop(0))
+                return parse_str(next_token())
             return int(val)
 
         def parse_array(val):
@@ -455,33 +478,31 @@ class Metadata:
             while val != ARRAY_END:
                 val = parse_val(val)
                 result.append(val)
-                val = data.pop(0)
+                val = next_token()
 
             return result
 
         def parse_dict(val):
-            result = {}
-            while val != DICT_END:
+            result = OrderedDict()
+            while val and val != DICT_END:
                 result[val] = parse_obj()
-                if not data:
-                    return result
-                val = data.pop(0)
+                val = next_token()
             return result
 
         def parse_obj():
 
-            val = data.pop(0)
+            val = next_token()
 
             if val == DICT_START:
-                return parse_dict(data.pop(0))
+                return parse_dict(next_token())
             elif val == ARRAY_START:
-                return parse_array(data.pop(0))
+                return parse_array(next_token())
             else:
                 val = parse_val(val)
 
             return val
 
-        name = data.pop(0)
+        name = next_token()
         obj = parse_dict(name)
 
         return name, obj
@@ -542,6 +563,7 @@ class Disk:
             hdr = MDAHeader.read(data)
             md = hdr.read_metadata(self.fp)
             print(md)
+            md.rename_vg("ck_lvm_data")
             hdr.write_metadata(self.fp, md)
 
     def dump(self):
