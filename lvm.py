@@ -537,8 +537,9 @@ class Disk:
 
         self.lbl_hdr = lbl
         self.pv_hdr = lbl.read_pv_header(fp)
+        self.metadata = self.read_metadata()
 
-    @ classmethod
+    @classmethod
     def open(cls, path: PathLike) -> None:
         fp = open(path, "rb+")
         hdr = LabelHeader.search(fp)
@@ -555,14 +556,22 @@ class Disk:
             data = ma.read_data(self.fp)
             hdr = MDAHeader.read(data)
             md = hdr.read_metadata(self.fp)
-            print(md)
-            md.rename_vg("ck_lvm_data")
-            hdr.write_metadata(self.fp, md)
+            return md
+
+    def write_metadata(self):
+        pv = self.pv_hdr
+
+        for ma in pv.meta_areas:
+            ma.write_metadata(self.fp, self.metadata)
+
+    def rename_vg(self, new_name):
+        self.metadata.rename_vg(new_name)
 
     def dump(self):
         print(self.path)
         print(self.lbl_hdr)
         print(self.pv_hdr)
+        print(self.metadata)
 
     def __enter__(self):
         assert self.fp, "Disk not open"
